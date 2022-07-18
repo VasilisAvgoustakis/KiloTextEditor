@@ -42,7 +42,7 @@ int main() {
 
     char c;
 
-    // prints each typed char's ASCII numeric valuej
+    // prints each typed char's ASCII numeric value
     while (read(STDIN_FILENO, &c, 1) == 1 && c != 'q'){
         if (iscntrl(c)) { // iscntrl() comes from <ctype.h>, it tests whether a character is a control character. 
             printf("%d\r\n", c); // '\r' carriage returns the cursor to the beginning of the line and '\n' moves cursor a line downwards
