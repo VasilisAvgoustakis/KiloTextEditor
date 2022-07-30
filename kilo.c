@@ -1,5 +1,4 @@
 /*** includes ***/
-
 #include <ctype.h>
 #include <errno.h>
 #include <stdio.h>
@@ -7,17 +6,25 @@
 #include <termios.h>
 #include <unistd.h>
 
+/*** defines ***/
+#define CTRL_KEY(k) ((k) & 0x1f)
+
 
 /*** data ***/
 
 // global vars
 struct termios orig_termios;
 
-
 /*** terminal ***/
 
 // prints an error message and exits the programm
 void die (const *s){
+
+    // see editorRefreshScreen
+    // cleans up screen in case of error during rendering the screen
+    write(STDOUT_FILENO, "\x1b[2J", 4);
+    write(STDOUT_FILENO, "\x1b[H", 3);
+
     /* perror() comes from <stdio.h>, and exit() comes from <stdlib.h>.
     * Most C library functions that fail will set the global errno variable to indicate what the error was. 
     * perror() looks at the global errno variable and prints a descriptive error message for it. 
@@ -68,30 +75,73 @@ void enableRawMode() {
     if(tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) die("tcsetattr");
 }
 
+
+// wait for one keypress, and return it
+char editorReadKey() {
+    int nread;
+    char c;
+
+    while ((nread = read(STDIN_FILENO, &c, 1)) != 1){
+        if(nread == -1 && errno != EAGAIN) die("read");
+    }
+
+    return c;
+}
+
+/*** output ***/
+
+void editorDrawRows(){
+    int y;
+
+    for(y = 0; y < 24; y++){
+        write(STDOUT_FILENO, "~\r\n", 3);
+    }
+}
+
+void editorRefreshScreen() {
+    
+    /* The 4 in our write() call means we are writing 4 bytes out to the terminal.
+    * first byte is \x1b, which is the escape character, or 27 in decimal
+    * Escape sequences always start with an escape character (27) followed by a [ character
+    * J command (Erase In Display) to clear the screen. argument is 2, which says to clear the entire screen. */
+    write(STDOUT_FILENO, "\x1b[2J", 4);
+
+    // H command (Cursor Position) to position the cursor.
+    write(STDOUT_FILENO, "\x1b[H", 3);
+
+    // draws a column of tildes at the left part of the screen
+    editorDrawRows();
+
+    // After we’re done drawing, we do another <esc>[H escape sequence to reposition the cursor back up at the top-left corner.
+    write(STDOUT_FILENO, "\x1b[H", 3);
+}
+
+/*** input ***/
+
+
+// waits for a keypress, and then handles it.
+void editorProcessKeypress(){
+    char c = editorReadKey();
+
+    switch (c) {
+        case CTRL_KEY('q'):
+            // clears screen after uiting the program
+            // see editorRefreshScreen
+            write(STDOUT_FILENO, "\x1b[2J", 4);
+            write(STDOUT_FILENO, "\x1b[H", 3);
+            exit(0);
+            break;
+    }
+}
+
 /*** init ***/
 
 int main() {
     enableRawMode();
 
-    char c;
-
-    // prints each typed char's ASCII numeric value
     while (1) {
-
-        char c = '/0';
-        /*
-        * errno and EAGAIN come from <errno.h>.
-        * tcsetattr(), tcgetattr(), and read() all return -1 on failure, and set the errno value to indicate the error.
-        */
-
-        if(read(STDIN_FILENO, &c, 1) == -1 && errno != EAGAIN) die("read");
-
-        if (iscntrl(c)) { // iscntrl() comes from <ctype.h>, it tests whether a character is a control character. 
-            printf("%d\r\n", c); // '\r' carriage returns the cursor to the beginning of the line and '\n' moves cursor a line downwards
-        } else {
-            printf ("%d (%c)\r\n", c, c);
-        }
-        if (c == 'q') break;
+        editorRefreshScreen();
+        editorProcessKeypress();
     }
 
     return 0;
