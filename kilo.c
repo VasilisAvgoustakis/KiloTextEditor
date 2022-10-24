@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/ioctl.h>
 #include <termios.h>
 #include <unistd.h>
 
@@ -12,8 +13,14 @@
 
 /*** data ***/
 
-// global vars
-struct termios orig_termios;
+// global struct that will contain the editor's state
+struct editorConfig {
+    int screenrows;
+    int screencols;
+    struct termios orig_termios; // termios struct holds terminal attributes, orig_termios holds the original state of our terminal
+};
+
+struct editorConfig E;
 
 /*** terminal ***/
 
@@ -35,17 +42,17 @@ void die (const *s){
 
 // disables raw mode of terminal after program termination
 void disableRawMode() {
-    if(tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios) == -1){
+    if(tcsetattr(STDIN_FILENO, TCSAFLUSH, &E.orig_termios) == -1){
         die("tcsetattr");
     };
 }
 
 // sets terminal attributes so that it runs in raw mode
 void enableRawMode() {
-    if(tcgetattr(STDIN_FILENO, &orig_termios) == -1) die("tcgetattr");
+    if(tcgetattr(STDIN_FILENO, &E.orig_termios) == -1) die("tcgetattr");
     atexit(disableRawMode);
 
-    struct termios raw = orig_termios;
+    struct termios raw = E.orig_termios;
 
     
     // 'ECHO' prints each key you type to the terminal
@@ -88,12 +95,59 @@ char editorReadKey() {
     return c;
 }
 
+
+int getCursorPosition(int *rows, int *cols) {
+    char buf[32]; // buffer to read in the response until we get to char 'R'
+    int i = 0;
+
+    if (write(STDOUT_FILENO, "\x1b[6n", 4) != 4) return -1;
+
+    while ( i < sizeof(buf) - 1){
+        if (read(STDIN_FILENO, &buf[i], 1) != 1) break;
+        if (buf[i] == 'R') break;
+        i++;
+    }
+    buf[i] = '\0'; // printf() expects strings to end with a 0 byte, so we make sure to assign '\0' to the final byte of buf.
+
+    // Let’s parse the two numbers out of there using sscanf()
+    if (buf[0] != '\x1b' || buf[1] != '[') return -1;
+    if (sscanf(&buf[2], "%d;%d", rows, cols) != 2) return -1;
+    return 0;
+
+    return -1;
+}
+
+
+// the easy way to get window size
+int getWindowSize(int *rows, int *cols) {
+    struct winsize ws;
+
+    // ioctl(), TIOCGWINSZ, and struct winsize come from <sys/ioctl.h>.
+
+    // ioctl isn't guaranteed to be able to request the window size on all systems
+    // so we provide a fallback method
+
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0) {
+        // we move the cursoer to the bottom-right by sending two escape sequences one after the other.
+        // The C command (Cursor Forward) moves the cursor to the right, and the B command (Cursor Down) moves the cursor down.
+        if (write(STDOUT_FILENO, "\x1b[999C\x1b[999B", 12) != 12) return -1; 
+            return getCursorPosition(rows, cols);
+    } else {                // If it succeeded, we pass the values back by setting the int references 
+                            // that were passed to the function. (This is a common approach to having 
+                            // functions return multiple values in C. It also allows you to use the return value to 
+                            // indicate success or failure.)
+        *cols = ws.ws_col;
+        *rows = ws.ws_row;
+        return 0;
+    }
+}
+
 /*** output ***/
 
 void editorDrawRows(){
     int y;
 
-    for(y = 0; y < 24; y++){
+    for(y = 0; y < E.screenrows; y++){
         write(STDOUT_FILENO, "~\r\n", 3);
     }
 }
@@ -136,8 +190,14 @@ void editorProcessKeypress(){
 
 /*** init ***/
 
+// initializes all fiels in E struct
+void initEditor() {
+    if (getWindowSize(&E.screenrows, &E.screencols) == -1) die("getWindowSize");
+}
+
 int main() {
     enableRawMode();
+    initEditor();
 
     while (1) {
         editorRefreshScreen();
