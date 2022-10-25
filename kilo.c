@@ -3,11 +3,14 @@
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/ioctl.h>
 #include <termios.h>
 #include <unistd.h>
 
 /*** defines ***/
+#define KILO_VERSION "0.0.1"
+
 #define CTRL_KEY(k) ((k) & 0x1f)
 
 
@@ -142,32 +145,102 @@ int getWindowSize(int *rows, int *cols) {
     }
 }
 
+
+/*** append buffer ***/
+
+// We want to replace all our write() calls with code that appends the string to a buffer, and then write() this buffer out at the end.
+struct abuf { // dynamic string type that supports one operation: appending.
+    char *b;
+    int len;
+};
+
+#define ABUF_INIT {NULL, 0} // acts as a constructor for our abuf type.
+
+
+// append operation
+void abAppend(struct abuf *ab, const char *s, int len){
+    // make sure we allocate enough memory to hold the new string. 
+    char *new = realloc(ab->b, ab->len + len);
+
+    if (new == NULL) return;
+
+    // copy the string s after the end of the current data in the buffer, 
+    memcpy(&new[ab->len], s, len); // and we update the pointer and length of the abuf to the new values.
+    ab->b = new;
+    ab->len += len;
+}
+
+
+//destructor that deallocates the dynamic memory used by an abuf.
+void abFree(struct abuf *ab){
+    free(ab->b);
+}
+
 /*** output ***/
 
-void editorDrawRows(){
+void editorDrawRows(struct abuf *ab){
     int y;
 
     for(y = 0; y < E.screenrows; y++){
-        write(STDOUT_FILENO, "~\r\n", 3);
+        /***
+         * We use the welcome buffer and snprintf() to interpolate our KILO_VERSION string into the welcome message. 
+         * We also truncate the length of the string in case the terminal is too tiny to fit our welcome message.
+         * ***/
+        if (y == E.screenrows /3){
+            char welcome[80];
+            int welcomelen = snprintf(welcome, sizeof(welcome),
+                "Kilo editor -- version %s", KILO_VERSION);
+            
+            if( welcomelen > E.screencols) welcomelen = E.screencols;
+            // center the message
+            int padding = (E.screencols - welcomelen) / 2; // divide the screen width by 2, subtract half of the string’s length from that
+            if (padding) {
+                abAppend(ab, "~", 1);
+                padding--;
+            }
+            /***
+             * That tells you how far from the left edge of the screen you should start printing the string. 
+             * So we fill that space with space characters, except for the first character, which should be a tilde.
+             * ***/
+            while (padding--) abAppend(ab, " ", 1);
+
+            abAppend(ab, welcome, welcomelen);
+        }else{
+            abAppend(ab, "~", 1);
+        }
+
+        abAppend(ab, "\x1b[K", 3); // The K command (Erase In Line) erases part of the current line.
+
+        if (y < E.screenrows -1) {
+            
+            abAppend(ab, "\r\n",2);
+        }
     }
 }
 
 void editorRefreshScreen() {
     
-    /* The 4 in our write() call means we are writing 4 bytes out to the terminal.
-    * first byte is \x1b, which is the escape character, or 27 in decimal
-    * Escape sequences always start with an escape character (27) followed by a [ character
-    * J command (Erase In Display) to clear the screen. argument is 2, which says to clear the entire screen. */
-    write(STDOUT_FILENO, "\x1b[2J", 4);
+    struct abuf ab = ABUF_INIT;
+    // The h and l commands (Set Mode, Reset Mode) are used to turn on and turn off various terminal features or “modes”.
+    abAppend(&ab, "\x1b[?25l", 6); // hides the cursor before refreshing screen to avoid flicker effect
 
     // H command (Cursor Position) to position the cursor.
-    write(STDOUT_FILENO, "\x1b[H", 3);
+    abAppend(&ab, "\x1b[H", 3);
 
     // draws a column of tildes at the left part of the screen
-    editorDrawRows();
+    editorDrawRows(&ab);
 
     // After we’re done drawing, we do another <esc>[H escape sequence to reposition the cursor back up at the top-left corner.
-    write(STDOUT_FILENO, "\x1b[H", 3);
+    abAppend(&ab, "\x1b[H", 3);
+
+    // The h and l commands (Set Mode, Reset Mode) are used to turn on and turn off various terminal features or “modes”.
+    abAppend(&ab, "\x1b[?25h", 6);
+
+
+    // finally we use just on write() to format our screen as wished
+    write(STDOUT_FILENO, ab.b, ab.len);
+    // then we free the memory of the struct abuf ab
+    free(&ab);
 }
 
 /*** input ***/
