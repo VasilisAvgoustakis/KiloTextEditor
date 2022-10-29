@@ -1,2 +1,6 @@
 kilo
 a.out
+/.vscode
+/.kilo.dSYM
+Makefile
+textinput.txt
