@@ -18,6 +18,7 @@
 
 // global struct that will contain the editor's state
 struct editorConfig {
+    int cx, cy; // int variables to track cursor's x and y position
     int screenrows;
     int screencols;
     struct termios orig_termios; // termios struct holds terminal attributes, orig_termios holds the original state of our terminal
@@ -28,7 +29,7 @@ struct editorConfig E;
 /*** terminal ***/
 
 // prints an error message and exits the programm
-void die (const *s){
+void die (const char *s){
 
     // see editorRefreshScreen
     // cleans up screen in case of error during rendering the screen
@@ -231,20 +232,39 @@ void editorRefreshScreen() {
     editorDrawRows(&ab);
 
     // After we’re done drawing, we do another <esc>[H escape sequence to reposition the cursor back up at the top-left corner.
-    abAppend(&ab, "\x1b[H", 3);
+    char buf[32];
+    snprintf(buf, sizeof(buf), "\x1b[%d;%dH", E.cy + 1, E.cx +1); // We add 1 to E.cy and E.cx to convert from 0-indexed values to the 1-indexed values that the terminal uses.
+    abAppend(&ab, buf, strlen(buf));
 
     // The h and l commands (Set Mode, Reset Mode) are used to turn on and turn off various terminal features or “modes”.
     abAppend(&ab, "\x1b[?25h", 6);
 
-
-    // finally we use just on write() to format our screen as wished
+    // finally we use just one write() to format our screen as wished
     write(STDOUT_FILENO, ab.b, ab.len);
     // then we free the memory of the struct abuf ab
-    free(&ab);
+    abFree(&ab);
 }
 
 /*** input ***/
 
+
+// makes the cursor move around by using w,s,a,d keys
+void editorMoveCursor(char key) {
+    switch (key) {
+        case 'a':
+            E.cx--;
+            break;
+        case 'd':
+            E.cx++;
+            break;
+        case 'w':
+            E.cy--;
+            break;
+        case 's':
+            E.cy++;
+            break;
+    }
+}
 
 // waits for a keypress, and then handles it.
 void editorProcessKeypress(){
@@ -252,19 +272,31 @@ void editorProcessKeypress(){
 
     switch (c) {
         case CTRL_KEY('q'):
-            // clears screen after uiting the program
+            // quiting
+            // clears screen after quiting the program
             // see editorRefreshScreen
             write(STDOUT_FILENO, "\x1b[2J", 4);
             write(STDOUT_FILENO, "\x1b[H", 3);
             exit(0);
+            break;
+        
+        // cursor movement
+        case 'w':
+        case 's':
+        case 'a':
+        case 'd':
+            editorMoveCursor(c);
             break;
     }
 }
 
 /*** init ***/
 
-// initializes all fiels in E struct
+// initializes all fields in E struct
 void initEditor() {
+    E.cx = 0;
+    E.cy = 0;
+
     if (getWindowSize(&E.screenrows, &E.screencols) == -1) die("getWindowSize");
 }
 
