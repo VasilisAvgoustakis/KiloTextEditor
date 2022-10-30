@@ -13,6 +13,15 @@
 
 #define CTRL_KEY(k) ((k) & 0x1f)
 
+enum editorKey {
+    ARROW_LEFT = 1000, // the rest of the constants get incrementing values of 1001, 1002, 1003, and so on.
+    ARROW_RIGHT,
+    ARROW_UP,
+    ARROW_DOWN,
+    PAGE_UP,
+    PAGE_DOWN
+};
+
 
 /*** data ***/
 
@@ -88,12 +97,46 @@ void enableRawMode() {
 
 
 // wait for one keypress, and return it
-char editorReadKey() {
+int editorReadKey() {
     int nread;
     char c;
 
     while ((nread = read(STDIN_FILENO, &c, 1)) != 1){
         if(nread == -1 && errno != EAGAIN) die("read");
+    }
+
+    if (c == '\x1b') { // If we read an escape character, 
+        char seq[3];
+        // we immediately read two more bytes into the seq buffer.
+        // If either of these reads time out (after 0.1 seconds),
+        // then we assume the user just pressed the Escape key and return that. 
+        if (read(STDIN_FILENO, &seq[0], 1) != 1) return '\x1b';
+        if (read(STDIN_FILENO, &seq[1],1) != 1) return '\x1b' ;
+
+
+        // Otherwise we check to see if the escape sequence is an arrow key escpape sequence
+        if (seq[0] == '[') {
+            if(seq[1] >= '0' && seq [1] <= '9') {
+                if (read(STDIN_FILENO, &seq[2], 1) != 1) return '\x1b';
+                if (seq[2] == '~') {
+                    switch (seq[1]) {
+                        case '5': return PAGE_UP;
+                        case '6': return PAGE_DOWN;
+                    }
+                }
+            }else{
+                switch (seq[1]){
+                    case 'A': return ARROW_UP;
+                    case 'B': return ARROW_DOWN;
+                    case 'C': return ARROW_RIGHT;
+                    case 'D': return ARROW_LEFT;
+                }
+            } 
+        }
+
+        return '\x1b';
+    }else{
+        return c;
     }
 
     return c;
@@ -249,26 +292,26 @@ void editorRefreshScreen() {
 
 
 // makes the cursor move around by using w,s,a,d keys
-void editorMoveCursor(char key) {
+void editorMoveCursor(int key) {
     switch (key) {
-        case 'a':
-            E.cx--;
+        case ARROW_LEFT:
+            if (E.cx = 0) E.cx--;
             break;
-        case 'd':
-            E.cx++;
+        case ARROW_RIGHT:
+            if (E.cx != E.screencols -1) E.cx++;
             break;
-        case 'w':
-            E.cy--;
+        case ARROW_UP:
+            if ( E.cy != 0) E.cy--;
             break;
-        case 's':
-            E.cy++;
+        case ARROW_DOWN:
+            if (E.cy != E.screenrows -1) E.cy++;
             break;
     }
 }
 
 // waits for a keypress, and then handles it.
 void editorProcessKeypress(){
-    char c = editorReadKey();
+    int c = editorReadKey();
 
     switch (c) {
         case CTRL_KEY('q'):
@@ -279,12 +322,21 @@ void editorProcessKeypress(){
             write(STDOUT_FILENO, "\x1b[H", 3);
             exit(0);
             break;
+
+        case PAGE_UP:
+        case PAGE_DOWN:
+            {
+                int times = E.screenrows;
+                while (times--)
+                    editorMoveCursor(c == PAGE_UP ? ARROW_UP : ARROW_DOWN);
+            }
+            break;
         
         // cursor movement
-        case 'w':
-        case 's':
-        case 'a':
-        case 'd':
+        case ARROW_UP:
+        case ARROW_DOWN:
+        case ARROW_LEFT:
+        case ARROW_RIGHT:
             editorMoveCursor(c);
             break;
     }
