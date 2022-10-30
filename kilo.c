@@ -1,10 +1,17 @@
 /*** includes ***/
+// If your compiler complains about getline(), you may need to define a feature test macro.
+#define _DEFAULT_SOURCE
+#define _BSD_SOURCE
+#define _GNU_SOURCE
+
+
 #include <ctype.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/types.h>
 #include <termios.h>
 #include <unistd.h>
 
@@ -28,11 +35,20 @@ enum editorKey {
 
 /*** data ***/
 
+// a data type for storing a row of text in our editor.
+typedef struct erow { // typedef lets us refer to the type as erow instead of struct erow.
+    int size;
+    char *chars;
+} erow; // erow = editor row
+
+
 // global struct that will contain the editor's state
 struct editorConfig {
     int cx, cy; // int variables to track cursor's x and y position
     int screenrows;
     int screencols;
+    int numrows;
+    erow row;
     struct termios orig_termios; // termios struct holds terminal attributes, orig_termios holds the original state of our terminal
 };
 
@@ -205,6 +221,35 @@ int getWindowSize(int *rows, int *cols) {
 }
 
 
+/*** file i/o ***/
+
+// opening and reading a file from disk,
+void editorOpen(char *filename) {
+    FILE *fp = fopen(filename, "r");
+    if (!fp) die("fopen");
+
+    char *line = NULL;
+    size_t linecap = 0; // line capacity
+    ssize_t linelen;
+    linelen = getline(&line, &linecap, fp); // is useful for reading lines from a file when we don’t know how much memory to allocate for each line. It takes care of memory management for you.
+
+    if (linelen != -1) {
+        while (linelen > 0 && (line[linelen -1] == '\n' ||
+                                line[linelen -1] == '\r'))
+            linelen--;
+    
+
+        E.row.size = linelen; //  set the erow size field to the length of our message,
+        E.row.chars = malloc(linelen +1); // allocate memory
+        memcpy(E.row.chars, line, linelen); // copy the msg to chars field of erow which point to the memory we allocated
+        E.row.chars[linelen = '/0'];
+        E.numrows = 1; //  indicate that the erow now contains a line that should be displayed.
+    }
+    free(line); // free() the line that getline() allocated.
+    fclose(fp);
+}
+
+
 /*** append buffer ***/
 
 // We want to replace all our write() calls with code that appends the string to a buffer, and then write() this buffer out at the end.
@@ -241,11 +286,12 @@ void editorDrawRows(struct abuf *ab){
     int y;
 
     for(y = 0; y < E.screenrows; y++){
+        if (y >= E.numrows){ // checks whether we are currently drawing a row that is part of the text buffer, or a row that comes after the end of the text buffer.
         /***
          * We use the welcome buffer and snprintf() to interpolate our KILO_VERSION string into the welcome message. 
          * We also truncate the length of the string in case the terminal is too tiny to fit our welcome message.
          * ***/
-        if (y == E.screenrows /3){
+        if (E.numrows == 0 && y == E.screenrows /3){
             char welcome[80];
             int welcomelen = snprintf(welcome, sizeof(welcome),
                 "Kilo editor -- version %s", KILO_VERSION);
@@ -266,6 +312,11 @@ void editorDrawRows(struct abuf *ab){
             abAppend(ab, welcome, welcomelen);
         }else{
             abAppend(ab, "~", 1);
+         }
+        }else {
+            int len = E.row.size;
+            if (len > E.screencols) len = E.screencols;
+            abAppend(ab, E.row.chars, len); //  draw a row that’s part of the text buffer, we simply write out the chars field of the erow.
         }
 
         abAppend(ab, "\x1b[K", 3); // The K command (Erase In Line) erases part of the current line.
@@ -371,14 +422,18 @@ void editorProcessKeypress(){
 void initEditor() {
     E.cx = 0;
     E.cy = 0;
+    E.numrows = 0;
 
     if (getWindowSize(&E.screenrows, &E.screencols) == -1) die("getWindowSize");
 }
 
-int main() {
+int main(int argc, char *argv[]) {
     enableRawMode();
     initEditor();
-
+    if (argc >= 2) {
+        editorOpen(argv[1]);
+    }
+    
     while (1) {
         editorRefreshScreen();
         editorProcessKeypress();
