@@ -45,10 +45,11 @@ typedef struct erow { // typedef lets us refer to the type as erow instead of st
 // global struct that will contain the editor's state
 struct editorConfig {
     int cx, cy; // int variables to track cursor's x and y position
+    int rowoff; // keeps track of what row of the file the user is currently scrolled to
     int screenrows;
     int screencols;
     int numrows;
-    erow row;
+    erow *row;
     struct termios orig_termios; // termios struct holds terminal attributes, orig_termios holds the original state of our terminal
 };
 
@@ -221,6 +222,21 @@ int getWindowSize(int *rows, int *cols) {
 }
 
 
+/*** Row Operations ***/
+
+// allocates space for a new erow, and then copies the given string to a new erow at the end of the E.row array.
+void editorAppendRow(char *s, size_t len) {
+    E.row = realloc(E.row, sizeof(erow) * (E.numrows + 1)); // multiply the number of bytes each erow takes (sizeof(erow)) and multiply that by the number of rows we want to tell realloc how many bytes to allocate
+
+    int at = E.numrows; // index of the new row we want to initialize
+    E.row[at].size = len;
+    E.row[at].chars = malloc(len +1);
+    memcpy(E.row[at].chars, s, len);
+    E.row[at].chars[len] = '\0';
+    E.numrows++;
+}
+
+
 /*** file i/o ***/
 
 // opening and reading a file from disk,
@@ -231,19 +247,12 @@ void editorOpen(char *filename) {
     char *line = NULL;
     size_t linecap = 0; // line capacity
     ssize_t linelen;
-    linelen = getline(&line, &linecap, fp); // is useful for reading lines from a file when we don’t know how much memory to allocate for each line. It takes care of memory management for you.
 
-    if (linelen != -1) {
+    while ((linelen = getline(&line, &linecap, fp)) != -1){
         while (linelen > 0 && (line[linelen -1] == '\n' ||
                                 line[linelen -1] == '\r'))
             linelen--;
-    
-
-        E.row.size = linelen; //  set the erow size field to the length of our message,
-        E.row.chars = malloc(linelen +1); // allocate memory
-        memcpy(E.row.chars, line, linelen); // copy the msg to chars field of erow which point to the memory we allocated
-        E.row.chars[linelen = '/0'];
-        E.numrows = 1; //  indicate that the erow now contains a line that should be displayed.
+        editorAppendRow(line, linelen);
     }
     free(line); // free() the line that getline() allocated.
     fclose(fp);
@@ -282,27 +291,40 @@ void abFree(struct abuf *ab){
 
 /*** output ***/
 
+
+// checks if the cursor has moved outside of the visiblee window and if so adjusts E.rowoff so that the cursor is just inside the visible window.
+void editorScroll(){
+    if (E.cy < E.rowoff){ // check if the cursor is above visible window and scroll up to where cursor is
+        E.rowoff = E.cy;
+    }
+    if (E.cy >= E.rowoff + E.screenrows) {// check if the cursor is past the bottom of the visible window
+        E.rowoff = E.cy - E.screenrows + 1;
+    }
+}
+
+
 void editorDrawRows(struct abuf *ab){
     int y;
 
     for(y = 0; y < E.screenrows; y++){
-        if (y >= E.numrows){ // checks whether we are currently drawing a row that is part of the text buffer, or a row that comes after the end of the text buffer.
+        int filerow = y + E.rowoff; // To get the row of the file that we want to display at each y position, we add E.rowoff to the y position.
+        if (filerow >= E.numrows){ // checks whether we are currently drawing a row that is part of the text buffer, or a row that comes after the end of the text buffer.
         /***
          * We use the welcome buffer and snprintf() to interpolate our KILO_VERSION string into the welcome message. 
          * We also truncate the length of the string in case the terminal is too tiny to fit our welcome message.
          * ***/
-        if (E.numrows == 0 && y == E.screenrows /3){
-            char welcome[80];
-            int welcomelen = snprintf(welcome, sizeof(welcome),
-                "Kilo editor -- version %s", KILO_VERSION);
-            
-            if( welcomelen > E.screencols) welcomelen = E.screencols;
-            // center the message
-            int padding = (E.screencols - welcomelen) / 2; // divide the screen width by 2, subtract half of the string’s length from that
-            if (padding) {
-                abAppend(ab, "~", 1);
-                padding--;
-            }
+            if (E.numrows == 0 && y == E.screenrows /3){
+                char welcome[80];
+                int welcomelen = snprintf(welcome, sizeof(welcome),
+                    "Kilo editor -- version %s", KILO_VERSION);
+                
+                if( welcomelen > E.screencols) welcomelen = E.screencols;
+                // center the message
+                int padding = (E.screencols - welcomelen) / 2; // divide the screen width by 2, subtract half of the string’s length from that
+                if (padding) {
+                    abAppend(ab, "~", 1);
+                    padding--;
+                }
             /***
              * That tells you how far from the left edge of the screen you should start printing the string. 
              * So we fill that space with space characters, except for the first character, which should be a tilde.
@@ -314,9 +336,9 @@ void editorDrawRows(struct abuf *ab){
             abAppend(ab, "~", 1);
          }
         }else {
-            int len = E.row.size;
+            int len = E.row[filerow].size;
             if (len > E.screencols) len = E.screencols;
-            abAppend(ab, E.row.chars, len); //  draw a row that’s part of the text buffer, we simply write out the chars field of the erow.
+            abAppend(ab, E.row[filerow].chars, len); //  draw a row that’s part of the text buffer, we simply write out the chars field of the erow.
         }
 
         abAppend(ab, "\x1b[K", 3); // The K command (Erase In Line) erases part of the current line.
@@ -329,6 +351,7 @@ void editorDrawRows(struct abuf *ab){
 }
 
 void editorRefreshScreen() {
+    editorScroll();
     
     struct abuf ab = ABUF_INIT;
     // The h and l commands (Set Mode, Reset Mode) are used to turn on and turn off various terminal features or “modes”.
@@ -342,7 +365,7 @@ void editorRefreshScreen() {
 
     // After we’re done drawing, we do another <esc>[H escape sequence to reposition the cursor back up at the top-left corner.
     char buf[32];
-    snprintf(buf, sizeof(buf), "\x1b[%d;%dH", E.cy + 1, E.cx +1); // We add 1 to E.cy and E.cx to convert from 0-indexed values to the 1-indexed values that the terminal uses.
+    snprintf(buf, sizeof(buf), "\x1b[%d;%dH", (E.cy - E.rowoff) + 1, E.cx +1); // We add 1 to E.cy and E.cx to convert from 0-indexed values to the 1-indexed values that the terminal uses.
     abAppend(&ab, buf, strlen(buf));
 
     // The h and l commands (Set Mode, Reset Mode) are used to turn on and turn off various terminal features or “modes”.
@@ -353,6 +376,7 @@ void editorRefreshScreen() {
     // then we free the memory of the struct abuf ab
     abFree(&ab);
 }
+
 
 /*** input ***/
 
@@ -370,7 +394,7 @@ void editorMoveCursor(int key) {
             if ( E.cy != 0) E.cy--;
             break;
         case ARROW_DOWN:
-            if (E.cy != E.screenrows -1) E.cy++;
+            if (E.cy != E.numrows) E.cy++;
             break;
     }
 }
@@ -422,7 +446,9 @@ void editorProcessKeypress(){
 void initEditor() {
     E.cx = 0;
     E.cy = 0;
+    E.rowoff = 0; // initialize it to 0, which means we’ll be scrolled to the top of the file by default.
     E.numrows = 0;
+    E.row = NULL;
 
     if (getWindowSize(&E.screenrows, &E.screencols) == -1) die("getWindowSize");
 }
