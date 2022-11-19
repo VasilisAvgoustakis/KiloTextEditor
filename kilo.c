@@ -17,6 +17,7 @@
 
 /*** defines ***/
 #define KILO_VERSION "0.0.1"
+#define KILO_TAB_STOP 8 // make the length of tab stop a constant
 
 #define CTRL_KEY(k) ((k) & 0x1f)
 
@@ -38,7 +39,10 @@ enum editorKey {
 // a data type for storing a row of text in our editor.
 typedef struct erow { // typedef lets us refer to the type as erow instead of struct erow.
     int size;
+    int rsize; // contains the size of the contents of render
     char *chars;
+    char *render; // just used to render tabs for now
+    
 } erow; // erow = editor row
 
 
@@ -225,6 +229,28 @@ int getWindowSize(int *rows, int *cols) {
 
 /*** Row Operations ***/
 
+void editorUpdateRow(erow *row) {
+    int tabs = 0;
+    int j;
+    for(j = 0; j < row->size; j++); // loop through the chars of the row and count the tabs, to know how much memory to allocate for render
+        if (row->chars[j] == '\t') tabs++; // check if char is a tab and if so increament tab
+    
+    free(row->render);
+    row->render = malloc(row->size + tabs*(KILO_TAB_STOP - 1) + 1); // calculate the maximum memory needed for the rendered row and allocate memory
+
+    int idx = 0; // after the for loop it will contain the number of characters copied into row->render so we assign it to row->rsize
+    for (j = 0; j < row->size; j++) {
+        if (row->chars[j] == '\t') { // check again if the char is a tab
+            row->render[idx++] = ' '; // if so append one space (each tab must advance the cursor at least one column)
+            while (idx % KILO_TAB_STOP != 0) row->render[idx++] = ' '; // then append spaces until a tab stop (a column divisble by 8)
+        } else {
+            row->render[idx++] = row->chars[j];
+        }   
+    }
+    row->render[idx] = '\0';
+    row->rsize = idx;
+}
+
 // allocates space for a new erow, and then copies the given string to a new erow at the end of the E.row array.
 void editorAppendRow(char *s, size_t len) {
     E.row = realloc(E.row, sizeof(erow) * (E.numrows + 1)); // multiply the number of bytes each erow takes (sizeof(erow)) and multiply that by the number of rows we want to tell realloc how many bytes to allocate
@@ -234,6 +260,11 @@ void editorAppendRow(char *s, size_t len) {
     E.row[at].chars = malloc(len +1);
     memcpy(E.row[at].chars, s, len);
     E.row[at].chars[len] = '\0';
+
+    E.row[at].rsize = 0;
+    E.row[at].render = NULL;
+    editorUpdateRow(&E.row[at]);
+
     E.numrows++;
 }
 
@@ -343,10 +374,10 @@ void editorDrawRows(struct abuf *ab){
             abAppend(ab, "~", 1);
          }
         }else {
-            int len = E.row[filerow].size - E.coloff;
+            int len = E.row[filerow].rsize - E.coloff;
             if (len < 0) len = 0;
             if (len > E.screencols) len = E.screencols;
-            abAppend(ab, &E.row[filerow].chars[E.coloff], len); //  draw a row that’s part of the text buffer, we simply write out the chars field of the erow.
+            abAppend(ab, &E.row[filerow].render[E.coloff], len); //  draw a row that’s part of the text buffer, we simply write out the chars field of the erow.
         }
 
         abAppend(ab, "\x1b[K", 3); // The K command (Erase In Line) erases part of the current line.
