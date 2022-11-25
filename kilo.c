@@ -17,7 +17,7 @@
 
 /*** defines ***/
 #define KILO_VERSION "0.0.1"
-#define KILO_TAB_STOP 8 // make the length of tab stop a constant
+#define KILO_TAB_STOP 8 // length of tab stop 
 
 #define CTRL_KEY(k) ((k) & 0x1f)
 
@@ -48,7 +48,8 @@ typedef struct erow { // typedef lets us refer to the type as erow instead of st
 
 // global struct that will contain the editor's state
 struct editorConfig {
-    int cx, cy; // int variables to track cursor's x and y position
+    int cx, cy; // int variables to track cursor's x and y position as an index into the chars field of an erow
+    int rx; // horizontal coordinate is an index in the render field of an erow to help render tabs
     int rowoff; // for vertical scrolling, keeps track of what row of the file the user is currently scrolled to
     int coloff; // for horizontal scrolling
     int screenrows;
@@ -229,6 +230,20 @@ int getWindowSize(int *rows, int *cols) {
 
 /*** Row Operations ***/
 
+// calculates the proper value of E.rx by converting a chars index into a render index.
+int editorRowCxToRx(erow *row, int cx) {
+    int rx = 0;
+    int j;
+
+    for (j = 0; j < cx; j++) {
+        if (row->chars[j] == '\t') // if char is a tab
+            rx += (KILO_TAB_STOP - 1) - (rx % KILO_TAB_STOP); // subtract "the amount of column we are to the right" from  KILO_TAB_STOP -1 to find out how manycolumns we are to the left of the next tab stop
+                // and add it to rx to get just to the left of the next tab stop
+        rx++; // and then this gets us right to the next tab stop
+    }
+    return rx;
+}
+
 void editorUpdateRow(erow *row) {
     int tabs = 0;
     int j;
@@ -326,17 +341,23 @@ void abFree(struct abuf *ab){
 
 // checks if the cursor has moved outside of the visiblee window and if so adjusts E.rowoff so that the cursor is just inside the visible window.
 void editorScroll(){
+    E.rx = 0;
+
+    if (E.cy < E.numrows) {
+        E.rx = editorRowCxToRx(&E.row[E.cy], E.cx);
+    }
+
     if (E.cy < E.rowoff){ // check if the cursor is above visible window and scroll up to where cursor is
         E.rowoff = E.cy;
     }
     if (E.cy >= E.rowoff + E.screenrows) {// check if the cursor is past the bottom of the visible window
         E.rowoff = E.cy - E.screenrows + 1;
     }
-    if (E.cx < E.coloff){
-        E.coloff = E.cx;
+    if (E.rx < E.coloff){
+        E.coloff = E.rx;
     }
-    if (E.cx >= E.coloff + E.screencols) {
-        E.coloff = E.cx - E.screencols + 1;
+    if (E.rx >= E.coloff + E.screencols) {
+        E.coloff = E.rx - E.screencols + 1;
     }
 }
 
@@ -404,7 +425,7 @@ void editorRefreshScreen() {
 
     // After we’re done drawing, we do another <esc>[H escape sequence to reposition the cursor back up at the top-left corner.
     char buf[32];
-    snprintf(buf, sizeof(buf), "\x1b[%d;%dH", (E.cy - E.rowoff) + 1, (E.cx - E.coloff) + 1); // We add 1 to E.cy and E.cx to convert from 0-indexed values to the 1-indexed values that the terminal uses.
+    snprintf(buf, sizeof(buf), "\x1b[%d;%dH", (E.cy - E.rowoff) + 1, (E.rx - E.coloff) + 1); // We add 1 to E.cy and E.cx to convert from 0-indexed values to the 1-indexed values that the terminal uses.
     abAppend(&ab, buf, strlen(buf));
 
     // The h and l commands (Set Mode, Reset Mode) are used to turn on and turn off various terminal features or “modes”.
@@ -478,12 +499,21 @@ void editorProcessKeypress(){
             E.cx = 0;
             break;
         case END_KEY:
-            E.cx = E.screencols -1;
+            if (E.cy < E.numrows){
+                E.cx = E.row[E.cy].size;
+            }
             break;
 
         case PAGE_UP:
         case PAGE_DOWN:
-            {
+            { // position the cursor either at the top or bottom
+                if (c == PAGE_UP) {
+                    E.cy = E.rowoff;
+                } else if (c == PAGE_DOWN) {
+                    E.cy = E.rowoff + E.screenrows - 1;
+                    if (E.cy < E.numrows) E.cy = E.numrows;
+                }
+            // simulate an entire screen’s worth of ↑ or ↓ keypresses
                 int times = E.screenrows;
                 while (times--)
                     editorMoveCursor(c == PAGE_UP ? ARROW_UP : ARROW_DOWN);
@@ -506,6 +536,7 @@ void editorProcessKeypress(){
 void initEditor() {
     E.cx = 0;
     E.cy = 0;
+    E.rx = 0;
     E.rowoff = 0; // initialize it to 0, which means we’ll be scrolled to the top of the file by default.
     E.coloff = 0; // "
     E.numrows = 0;
