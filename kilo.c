@@ -24,6 +24,7 @@
 #define CTRL_KEY(k) ((k) & 0x1f)
 
 enum editorKey {
+    BACKSPACE = 127, // does not have a backslash-escape representation in C so we assign it ASCII value 127.
     ARROW_LEFT = 1000, // the rest of the constants get incrementing values of 1001, 1002, 1003, and so on.
     ARROW_RIGHT,
     ARROW_UP,
@@ -289,6 +290,39 @@ void editorAppendRow(char *s, size_t len) {
 }
 
 
+// inserts a single character into an erow at given position
+void editorRowInsertChar (erow *row, int at, int c) {
+    if (at < 0 || at > row->size) at = row->size; // validate at, notice is allowed to go on char passed the end of the str, so the char is inderted at the end of the str
+    row->chars = realloc(row->chars, row->size + 2); // allocate 2 bytes in chars...2 because we also need room for the null byte
+    // we make room for the new character, we incremente chars by one then add new char its position in the array
+    memmove(&row->chars[at + 1], &row->chars[at], row->size - at + 1); // like memcopy() but safe when src and destination arrays overlap
+    // we incremente chars by one then add new char its position in the array
+    row->size++;
+    row->chars[at] = c;
+    // upgrades render an rsize fields with the new erow content
+    editorUpdateRow(row);
+}
+
+
+/*** Editor Operations ***/
+
+/*** 
+ * Notice that editorInsertChar() doesn’t have to worry about the details of modifying an erow,
+ *  and editorRowInsertChar() doesn’t have to worry about where the cursor is. 
+ * That is the difference between functions in the editor operations section and functions in the row operations  section. 
+ * ***/
+
+
+// takes a char and uses editorRowInsertChar() to insert that character into the position the cursor is at.
+void editorInsertChar(int c) {
+    if (E.cy == E.numrows) { // then the cursor is on the tilde line after the end of the file
+        editorAppendRow("", 0); // so we need to append a new row before inserting c
+    }
+    editorRowInsertChar(&E.row[E.cy], E.cx, c); // insert c to row using editorRowInsertChar()
+    E.cx++; // after inserting we move the cursor forward
+}
+
+
 /*** file i/o ***/
 
 // opening and reading a file from disk,
@@ -534,6 +568,11 @@ void editorProcessKeypress(){
     int c = editorReadKey();
 
     switch (c) {
+
+        case '\r': // ENTER KEY
+            /* TODO */
+            break;
+
         case CTRL_KEY('q'):
             // quiting
             // clears screen after quiting the program
@@ -551,6 +590,12 @@ void editorProcessKeypress(){
             if (E.cy < E.numrows){
                 E.cx = E.row[E.cy].size;
             }
+            break;
+
+        case BACKSPACE:
+        case CTRL_KEY('h'): // alternative old school backspace
+        case DEL_KEY:
+            /* TODO */
             break;
 
         case PAGE_UP:
@@ -575,6 +620,14 @@ void editorProcessKeypress(){
         case ARROW_LEFT:
         case ARROW_RIGHT:
             editorMoveCursor(c);
+            break;
+        
+        case CTRL_KEY('l'): // traditionally used to refresh the screen in termnal programs...here the screen refreshes after every keypress
+        case '\x1b': // we ignore all escape key sequences  (such as the F1–F12 keys)
+            break;
+
+        default:
+            editorInsertChar(c);
             break;
     }
 }
