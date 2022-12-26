@@ -7,6 +7,7 @@
 
 #include <ctype.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdarg.h>
 #include <stdlib.h>
@@ -59,6 +60,7 @@ struct editorConfig {
     int screencols;
     int numrows;
     erow *row;
+    int dirty; // we call a buf dirty when it has been modfied since opening
     char *filename; // for filename string
     char statusmsg[80]; // status msg string
     time_t statusmsg_time; // timestamp for status msg
@@ -66,6 +68,17 @@ struct editorConfig {
 };
 
 struct editorConfig E;
+
+
+/*** prototypes ***/
+/*
+ * Because C compiles in a "single pass" (it must be possible to compile each part of a program withour knowing what comes later in a program)
+ * you cannot call functions before they are defined in the file. The compiler needs to know the args and return val
+ * of that function. To provide this information to the compiler we provide this info to the compiler by declaring function prototypes
+ * near the top of the file. These functions can be called before they are defined. 
+*/
+
+void editorSetStatusMessage(const char *fmt, ...);
 
 /*** terminal ***/
 
@@ -287,6 +300,7 @@ void editorAppendRow(char *s, size_t len) {
     editorUpdateRow(&E.row[at]);
 
     E.numrows++;
+    E.dirty++; // increments to indicate change after opening a file
 }
 
 
@@ -301,6 +315,7 @@ void editorRowInsertChar (erow *row, int at, int c) {
     row->chars[at] = c;
     // upgrades render an rsize fields with the new erow content
     editorUpdateRow(row);
+    E.dirty++; // increments to indicate change after opening a file
 }
 
 
@@ -325,6 +340,30 @@ void editorInsertChar(int c) {
 
 /*** file i/o ***/
 
+// Concerts array of erow structs into a single string that is ready to be written out to a file
+char *editorRowsToString(int *buflen) {
+    int totlen = 0;
+    int j;
+    // add uo the lengths of each row, adding 1 for the newline char
+    for (j = 0; j < E.numrows; j++){
+        totlen += E.row[j].size + 1;
+    }
+    *buflen = totlen; // save the total len
+
+    char *buf = malloc(totlen); // we allocate the required memory
+    char *p = buf; 
+    // loop and memocpy() contents of each row to the end of the buffer appending newline after each row
+    for (j = 0; j < E.numrows; j++) {
+        memcpy(p, E.row[j].chars, E.row[j].size);
+        p += E.row[j].size;
+        *p = '\n';
+        p++;
+    }
+
+    // we return buf expecting the caller to free the memory
+    return buf;
+}
+
 // opening and reading a file from disk,
 void editorOpen(char *filename) {
     free(E.filename);
@@ -345,8 +384,38 @@ void editorOpen(char *filename) {
     }
     free(line); // free() the line that getline() allocated.
     fclose(fp);
+    E.dirty = 0; // reset dirty after editor Open so that (modified) stops appearing before making any changes
 }
 
+// writes the str returned by editorRowsToString() to disk
+void editorSave() {
+    // If it’s a new file, then E.filename will be NULL, and we won’t know where to save the file, so we just return without doing anything for now.
+    if (E.filename == NULL) return;
+
+    int len;
+    char *buf = editorRowsToString(&len);
+    //create new file if not exists (O_CREAT with mode 0644 standard permissions), open it for reading and writing (O_RDWR)
+    int fd = open(E.filename, O_RDWR | O_CREAT, 0644);
+    // set file size to specified length
+    // The normal way to overwrite a file is to pass the O_TRUNC flag to open() which truncates the file completely
+    //before writting new data into it. By truncating ourselves in this case to the same length as the data we are planning to write into it,
+    // we are making the whole overwriting operation a little bit safer in case the ftruncate() call succeeds write() fails.
+    // If the file was truncated completely by the open() call and then the write() failed, you's end up with all of your data lost.
+    if (fd != -1){
+        if (ftruncate(fd, len) != -1) {
+            if (write(fd, buf, len) == len) { // we expect write() to return the number of bytes we told to write
+                close(fd);
+                free(buf);
+                E.dirty = 0; // reset dirty after editor Open so that (modified) stops appearing before making any changes
+                editorSetStatusMessage("%d bytes written to disk", len);
+                return;
+            }
+        }
+        close(fd);
+    }
+    free(buf);
+    editorSetStatusMessage("Can't save! I/O error: %s", strerror(errno)); // line perror() (in die()) but takes errno as arg and return human-readable string for that error code
+}
 
 /*** append buffer ***/
 
@@ -453,8 +522,10 @@ void editorDrawRows(struct abuf *ab){
 editorDrawStatusBar(struct abuf *ab) {
     abAppend(ab, "\x1b[7m", 4); // <esc>[7m switches to inverted colors
     char status[80], rstatus[80];
-    int len = snprintf(status, sizeof(status), "%.20s - %d lines",
-                        E.filename ? E.filename : "[No Name]", E.numrows);
+    // display (modified) after filename if the file has been modified after opening
+    int len = snprintf(status, sizeof(status), "%.20s - %d lines %s",
+        E.filename ? E.filename: "[No Name]", E.numrows,
+        E.dirty ? "(modified)" : "");
     int rlen = snprintf(rstatus, sizeof(rstatus), "%d/%d", E.cy + 1, E.numrows);
     if (len > E.screencols) len = E.screencols;
     abAppend(ab, status, len);
@@ -582,6 +653,11 @@ void editorProcessKeypress(){
             exit(0);
             break;
 
+        // we map a key to function editorSave() to save the file.
+        case CTRL_KEY('s'):
+            editorSave();
+            break;
+
 
         case HOME_KEY:
             E.cx = 0;
@@ -643,6 +719,7 @@ void initEditor() {
     E.coloff = 0; // "
     E.numrows = 0;
     E.row = NULL;
+    E.dirty = 0;
     E.filename = NULL; // stays NULL if a file is not opened
     E.statusmsg[0] = '\0';
     E.statusmsg_time = 0;
@@ -658,7 +735,7 @@ int main(int argc, char *argv[]) {
         editorOpen(argv[1]);
     }
 
-    editorSetStatusMessage("HELP: Ctr-Q = quit");
+    editorSetStatusMessage("HELP: Ctrl-S = save | Ctr-Q = quit");
     
     while (1) {
         editorRefreshScreen();
