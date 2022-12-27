@@ -21,6 +21,7 @@
 /*** defines ***/
 #define KILO_VERSION "0.0.1"
 #define KILO_TAB_STOP 8 // length of tab stop 
+#define KILO_QUIT_TIMES 3 // how many times Ctrl-Q to quit without saving
 
 #define CTRL_KEY(k) ((k) & 0x1f)
 
@@ -304,6 +305,26 @@ void editorAppendRow(char *s, size_t len) {
 }
 
 
+// frees memory owned by rows that are being deleted
+void editorFreeRow(erow *row) {
+    free(row->render);
+    free(row->chars);
+}
+
+// deletes a row i.e. when its contents have been appended to previous row while backspacing
+void editorDelRow(int at) {
+    // check if cursor is whithin row range
+    if (at < 0 || at > E.numrows) return;
+    // free memory occupied by row
+    editorFreeRow(&E.row[at]);
+    // overwrite deleted row struct with rest of row after it
+    memmove(&E.row[at], &E.row[at + 1], sizeof(erow) * (E.numrows - at - 1));
+    // decrement numrows
+    E.numrows--;
+    // mark as modified
+    E.dirty--;
+}
+
 // inserts a single character into an erow at given position
 void editorRowInsertChar (erow *row, int at, int c) {
     if (at < 0 || at > row->size) at = row->size; // validate at, notice is allowed to go on char passed the end of the str, so the char is inderted at the end of the str
@@ -318,6 +339,31 @@ void editorRowInsertChar (erow *row, int at, int c) {
     E.dirty++; // increments to indicate change after opening a file
 }
 
+// appends a string at the end of a row i.e. when backspacing the row at its very beginning
+void editorRowAppendString(erow *row, char *s, size_t len) {
+    // allocate enough memory for the row's new size
+    row->chars = realloc(row->chars, row->size + len + 1);
+    // memcopy the given str at the end of the contents of row->chars
+    memcpy(&row->chars[row->size], s, len);
+    // update row's size
+    row->size += len;
+    row->chars[row->size] = '\0';
+    editorUpdateRow(row);
+    // mark as modified
+    E.dirty++;
+}
+
+// simple backspacing function
+void editorRowDelChar(erow *row, int at) {
+    // if given row char index is out of row range
+    if (at < 0 || at >= row->size) return;
+    // overwrite deleted char with chars that come after it (null byte at the end included)
+    memmove(&row->chars[at], &row->chars[at + 1], row->size - at);
+    row->size--; // decrement row's size
+    editorUpdateRow(row);
+    // make sure the data are marked as modified
+    E.dirty++;
+}
 
 /*** Editor Operations ***/
 
@@ -337,6 +383,29 @@ void editorInsertChar(int c) {
     E.cx++; // after inserting we move the cursor forward
 }
 
+
+void editorDelChar() {
+    // if cursor past the end of file there's nothing to delete
+    if (E.cy == E.numrows) return; 
+    // If the cursor is at the beginning of the first line, then there’s nothing to do
+    if(E.cx == 0 && E.cy == 0) return;
+
+    // else get the erow the cursor is on
+    erow *row = &E.row[E.cy];
+    // if there is a char to the left of the cursor call editorRowDelChar to delete it
+    if (E.cx > 0) { 
+        editorRowDelChar(row, E.cx - 1);
+        E.cx--; // then move the cursor to the left
+    } else { // else only E.cx == 0
+        // set row width to the size of the row above
+        E.cx = E.row[E.cy - 1].size;
+        // append current row to previous row
+        editorRowAppendString(&E.row[E.cy - 1], row->chars, row->size);
+        // delete current row
+        editorDelRow(E.cy);
+        E.cy--;
+    }
+}
 
 /*** file i/o ***/
 
@@ -636,6 +705,8 @@ void editorMoveCursor(int key) {
 
 // waits for a keypress, and then handles it.
 void editorProcessKeypress(){
+    static int quit_times = KILO_QUIT_TIMES; // static var to keep track how many more times Ctrl-Q needs to be pressed to quit without saving
+
     int c = editorReadKey();
 
     switch (c) {
@@ -645,6 +716,12 @@ void editorProcessKeypress(){
             break;
 
         case CTRL_KEY('q'):
+            if (E.dirty && quit_times > 0) { // check if text has been modified and if how many time Ctrl- Q has been pressed
+                editorSetStatusMessage("WARNING!!! File has unsaved changes. " 
+                "Press Ctrl-Q %d more times to quit.", quit_times); // display msg and remaining times
+                quit_times--; // decreament quit times every time Ctrl-Q is pressed
+                return;
+            }
             // quiting
             // clears screen after quiting the program
             // see editorRefreshScreen
@@ -671,7 +748,8 @@ void editorProcessKeypress(){
         case BACKSPACE:
         case CTRL_KEY('h'): // alternative old school backspace
         case DEL_KEY:
-            /* TODO */
+            if ( c == DEL_KEY) editorMoveCursor(ARROW_RIGHT); // with del or  -> + Backspace remove the char right of the cursor
+            editorDelChar();
             break;
 
         case PAGE_UP:
@@ -706,6 +784,8 @@ void editorProcessKeypress(){
             editorInsertChar(c);
             break;
     }
+
+    quit_times = KILO_QUIT_TIMES; // set back to 3 after the switch breaks and function ends
 }
 
 /*** init ***/
