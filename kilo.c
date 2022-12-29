@@ -80,6 +80,8 @@ struct editorConfig E;
 */
 
 void editorSetStatusMessage(const char *fmt, ...);
+void editorRefreshScreen();
+char *editorPrompt(char *prompt);
 
 /*** terminal ***/
 
@@ -287,10 +289,16 @@ void editorUpdateRow(erow *row) {
 }
 
 // allocates space for a new erow, and then copies the given string to a new erow at the end of the E.row array.
-void editorAppendRow(char *s, size_t len) {
-    E.row = realloc(E.row, sizeof(erow) * (E.numrows + 1)); // multiply the number of bytes each erow takes (sizeof(erow)) and multiply that by the number of rows we want to tell realloc how many bytes to allocate
+void editorInsertRow(int at, char *s, size_t len) {
+    // check if cursor is within row range
+    if (at < 0 || at > E.numrows) return;
 
-    int at = E.numrows; // index of the new row we want to initialize
+    // allocate memory for one more row
+    E.row = realloc(E.row, sizeof(erow) * (E.numrows + 1)); // multiply the number of bytes each erow takes (sizeof(erow)) and multiply that by the number of rows we want to tell realloc how many bytes to allocate
+    
+    // make room for at specified index for new row
+    memmove(&E.row[at + 1], &E.row[at], sizeof(erow) * (E.numrows - at));
+
     E.row[at].size = len;
     E.row[at].chars = malloc(len +1);
     memcpy(E.row[at].chars, s, len);
@@ -377,12 +385,34 @@ void editorRowDelChar(erow *row, int at) {
 // takes a char and uses editorRowInsertChar() to insert that character into the position the cursor is at.
 void editorInsertChar(int c) {
     if (E.cy == E.numrows) { // then the cursor is on the tilde line after the end of the file
-        editorAppendRow("", 0); // so we need to append a new row before inserting c
+        editorInsertRow(E.numrows, "", 0); // so we need to append a new row before inserting c
     }
     editorRowInsertChar(&E.row[E.cy], E.cx, c); // insert c to row using editorRowInsertChar()
     E.cx++; // after inserting we move the cursor forward
 }
 
+
+void editorInsertNewline() {
+    // if at the beginning of a line insert a new blank row before it
+    if (E.cx == 0) {
+        editorInsertRow(E.cy, "", 0);
+    } else { // split the line we are on in two rows
+        erow *row = &E.row[E.cy];
+        // insert a new row containing the chars of the splitted line that were right of the cursor
+        editorInsertRow(E.cy + 1, &row->chars[E.cx], row->size - E.cx);
+        // reassign row pointer to because editorInsertRow() calls realloc(), which might move memory around on us and invalidate the pointer 
+        row = &E.row[E.cy];
+        // turncate current row's contents setting its size to the position of the cursor
+        row->size = E.cx;
+        row->chars[row->size] = '\0';
+        // we update the truncated row
+        editorUpdateRow(row);
+        // editorInsertRow() already calls editorUpdateRow() for the new row.
+    }
+    // move the cursor to the beginning of the row
+    E.cy++;
+    E.cx = 0;
+}
 
 void editorDelChar() {
     // if cursor past the end of file there's nothing to delete
@@ -449,7 +479,7 @@ void editorOpen(char *filename) {
         while (linelen > 0 && (line[linelen -1] == '\n' ||
                                 line[linelen -1] == '\r'))
             linelen--;
-        editorAppendRow(line, linelen);
+        editorInsertRow(E.numrows, line, linelen);
     }
     free(line); // free() the line that getline() allocated.
     fclose(fp);
@@ -458,8 +488,14 @@ void editorOpen(char *filename) {
 
 // writes the str returned by editorRowsToString() to disk
 void editorSave() {
-    // If it’s a new file, then E.filename will be NULL, and we won’t know where to save the file, so we just return without doing anything for now.
-    if (E.filename == NULL) return;
+    // If it’s a new file, then E.filename will be NULL, so we get the new name given by the user
+    if (E.filename == NULL) {
+        E.filename = editorPrompt("Save as: %s (ESC to cancel)");
+        if (E.filename == NULL) {
+            editorSetStatusMessage("Save aborted");
+            return;
+        }
+    };
 
     int len;
     char *buf = editorRowsToString(&len);
@@ -662,7 +698,47 @@ void editorSetStatusMessage(const char *fmt, ...) { // ... makes the function to
 }
 
 /*** input ***/
+char *editorPrompt(char *prompt) {
+    size_t bufsize = 128;
 
+    // buf that stores user input a dynamically allocated string
+    char *buf = malloc(bufsize);
+
+    size_t buflen = 0;
+    buf[0] = '\0';
+
+    // infinate loop, repeatedly set status message, refreshes screen and waits for a keypress to handle
+    while(1) {
+        editorSetStatusMessage(prompt, buf);
+        editorRefreshScreen();
+
+        int c = editorReadKey();
+        
+
+        if (c == DEL_KEY || c == CTRL_KEY('h') || c == BACKSPACE) {
+            if (buflen != 0) buf[--buflen]  = '\0';
+        } else if (c == '\x1b') { // if user hits esc we exit the save as prompt
+            editorSetStatusMessage("");
+            free(buf);
+            return NULL;
+        } else if (c == '\r') { // when user presses enter and the input is not empty, status message is cleared and their input is returned
+            if (buflen != 0) {
+                editorSetStatusMessage("");
+                return buf;
+            }
+        } else if (!iscntrl(c) && c < 128) { // otherwise we append pressed chars to buf while checking that it is not a special key and thus its int mapping is less that 128 
+            // if buflen has reaches the maximum capacity (bufsize)
+            if (buflen == bufsize - 1) {
+                // we double bufsize and allocate that amount of memory before appending to buf
+                bufsize *= 2;
+                buf = realloc(buf, bufsize);
+            }
+            buf[buflen++] = c;
+            // we make sure the buf ends with a /0 char cause editorSetStatusMessage() and the caller of editorPrompt() will use it to know where the string ends
+            buf[buflen] = '\0';
+        }
+    }
+}
 
 // makes the cursor move around by using w,s,a,d keys
 void editorMoveCursor(int key) {
@@ -712,7 +788,7 @@ void editorProcessKeypress(){
     switch (c) {
 
         case '\r': // ENTER KEY
-            /* TODO */
+            editorInsertNewline();
             break;
 
         case CTRL_KEY('q'):
