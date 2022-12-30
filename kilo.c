@@ -81,7 +81,7 @@ struct editorConfig E;
 
 void editorSetStatusMessage(const char *fmt, ...);
 void editorRefreshScreen();
-char *editorPrompt(char *prompt);
+char *editorPrompt(char *prompt, void (*callback)(char *, int));
 
 /*** terminal ***/
 
@@ -265,6 +265,25 @@ int editorRowCxToRx(erow *row, int cx) {
     }
     return rx;
 }
+
+// oposite of editorRowCxToRx() converts render index into chars index used i.e. for searching indexing form render
+int editorRowRxToCx(erow *row, int rx) {
+    int cur_rx = 0;
+    int cx;
+    // loop through chars string
+    for (cx = 0; cx < row->size; cx++) {
+        // calculate current rx value
+        if (row->chars[cx] == '\t')
+            cur_rx += (KILO_TAB_STOP - 1) - (cur_rx % KILO_TAB_STOP);
+        cur_rx++;
+
+        // when cur_rx hits given rx value return cx
+        if (cur_rx > rx) return cx;
+    }
+    // just in case caller provides an rx that's out of range
+    return cx;
+}
+
 
 void editorUpdateRow(erow *row) {
     int tabs = 0;
@@ -490,7 +509,7 @@ void editorOpen(char *filename) {
 void editorSave() {
     // If it’s a new file, then E.filename will be NULL, so we get the new name given by the user
     if (E.filename == NULL) {
-        E.filename = editorPrompt("Save as: %s (ESC to cancel)");
+        E.filename = editorPrompt("Save as: %s (ESC to cancel)", NULL); // we pass NULL to the callback function cause we do not need it here
         if (E.filename == NULL) {
             editorSetStatusMessage("Save aborted");
             return;
@@ -521,6 +540,45 @@ void editorSave() {
     free(buf);
     editorSetStatusMessage("Can't save! I/O error: %s", strerror(errno)); // line perror() (in die()) but takes errno as arg and return human-readable string for that error code
 }
+
+
+/*** find */
+
+void editorFindCallback(char *query, int key) {
+    // check if user has pressed enter or ESC
+    if (key == '\r' || key == '\x1b') {
+        return;
+    }
+
+    int i;
+    // loop through all rows
+    for (i = 0; i < E.numrows; i++) {
+        erow *row = &E.row[i];
+        // strstr() checks if query is a substring of the current row if true returns a pointer to matching substring else return NULL
+        char *match = strstr(row->render, query);
+        if (match) {
+            E.cy = i;
+            // we convert match into an index to use as E.cx
+            // we subtract the row->render pointer from the match pointer, since match is a pointer into the row->render string
+            E.cx = editorRowRxToCx(row, match - row->render);
+            // set to get scrolled to the very bottom which will cause editorScroll() to scroll upwards at next screen reffresh so matching line appears at the top
+            E.rowoff = E.numrows;
+            break;
+        }
+    }
+
+
+}
+
+void editorFind() {
+    char *query = editorPrompt("Search: %s (ESC to cancel)", editorFindCallback);
+
+
+    if (query) {
+        free(query);
+    }
+}
+
 
 /*** append buffer ***/
 
@@ -698,7 +756,7 @@ void editorSetStatusMessage(const char *fmt, ...) { // ... makes the function to
 }
 
 /*** input ***/
-char *editorPrompt(char *prompt) {
+char *editorPrompt(char *prompt, void (*callback)(char *, int)) {
     size_t bufsize = 128;
 
     // buf that stores user input a dynamically allocated string
@@ -719,11 +777,13 @@ char *editorPrompt(char *prompt) {
             if (buflen != 0) buf[--buflen]  = '\0';
         } else if (c == '\x1b') { // if user hits esc we exit the save as prompt
             editorSetStatusMessage("");
+            if (callback) callback(buf, c);
             free(buf);
             return NULL;
         } else if (c == '\r') { // when user presses enter and the input is not empty, status message is cleared and their input is returned
             if (buflen != 0) {
                 editorSetStatusMessage("");
+                if (callback) callback(buf, c);
                 return buf;
             }
         } else if (!iscntrl(c) && c < 128) { // otherwise we append pressed chars to buf while checking that it is not a special key and thus its int mapping is less that 128 
@@ -737,6 +797,8 @@ char *editorPrompt(char *prompt) {
             // we make sure the buf ends with a /0 char cause editorSetStatusMessage() and the caller of editorPrompt() will use it to know where the string ends
             buf[buflen] = '\0';
         }
+
+        if (callback) callback(buf, c);
     }
 }
 
@@ -821,6 +883,10 @@ void editorProcessKeypress(){
             }
             break;
 
+        case CTRL_KEY('f'):
+            editorFind();
+            break;
+
         case BACKSPACE:
         case CTRL_KEY('h'): // alternative old school backspace
         case DEL_KEY:
@@ -891,7 +957,7 @@ int main(int argc, char *argv[]) {
         editorOpen(argv[1]);
     }
 
-    editorSetStatusMessage("HELP: Ctrl-S = save | Ctr-Q = quit");
+    editorSetStatusMessage("HELP: Ctrl-S = save | Ctr-Q = quit | Ctrl-F = find");
     
     while (1) {
         editorRefreshScreen();
