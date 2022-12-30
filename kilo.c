@@ -712,7 +712,19 @@ void editorDrawRows(struct abuf *ab){
             int len = E.row[filerow].rsize - E.coloff;
             if (len < 0) len = 0;
             if (len > E.screencols) len = E.screencols;
-            abAppend(ab, &E.row[filerow].render[E.coloff], len); //  draw a row that’s part of the text buffer, we simply write out the chars field of the erow.
+            // We can no longer just feed the substring of render that we want to print right into abAppend(). We’ll have to do it character-by-character from now on. 
+            char *c = &E.row[filerow].render[E.coloff];
+            int j;
+            for (j = 0; j < len; j++) {
+                if (isdigit(c[j])) { // if char is digit
+                    abAppend(ab, "\x1b[31m", 5); // it is preceeded by <esc>[31m escape sequence the m command is used to give color 31 as an arg gives the color red
+                    abAppend(ab, &c[j], 1);
+                    abAppend(ab, "\x1b[39m", 5); // and followed by the <esc>[39m sequence. The 39 as arg to m restored color back to normal
+                    // 
+                } else {
+                    abAppend(ab, &c[j], 1);
+                }
+            }
         }
 
         abAppend(ab, "\x1b[K", 3); // The K command (Erase In Line) erases part of the current line.
@@ -1006,5 +1018,3 @@ int main(int argc, char *argv[]) {
 
     return 0;
 }
-
-// next: CH3 Arrow Keys
