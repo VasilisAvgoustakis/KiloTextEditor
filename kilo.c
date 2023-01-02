@@ -40,7 +40,8 @@ enum editorKey {
 
 enum editorHighlight {
     HL_NORMAL = 0,
-    HL_NUMBER
+    HL_NUMBER,
+    HL_MATCH
 };
 
 
@@ -276,7 +277,8 @@ void editorUpdateSyntax(erow *row) {
 // maps values in hl to the actual ANSI color codes we want to draw them with
 int editorSyntaxToColor(int hl) {
     switch (hl) {
-        case HL_NUMBER: return 31; // forground red for all number
+        case HL_NUMBER: return 31; // forground red for all numbers
+        case HL_MATCH: return 34; // blue search results
         default: return 37; // foreground white as default
     }
 }
@@ -584,6 +586,19 @@ void editorFindCallback(char *query, int key) {
     static int last_match = -1;
     // the direction of the search 1 = forward -1 = backwards
     static int direction = 1;
+    // which line's hl is going to be restored
+    static int saved_hl_line; 
+    // save original contents of hl before highlighting
+    static char *saved_hl = NULL;
+
+    if (saved_hl) { // if there is something to be stored
+        // we memcopy it to the saved line's hl
+        memcpy(E.row[saved_hl_line].hl, saved_hl, E.row[saved_hl_line].rsize);
+        // and then deallocate saved_hl
+        free(saved_hl);
+        // and set it back to NULL
+        saved_hl = NULL;
+    }
 
 
     // check if user has pressed enter or ESC
@@ -627,6 +642,16 @@ void editorFindCallback(char *query, int key) {
             E.cx = editorRowRxToCx(row, match - row->render);
             // set to get scrolled to the very bottom which will cause editorScroll() to scroll upwards at next screen reffresh so matching line appears at the top
             E.rowoff = E.numrows;
+
+            saved_hl_line = current;
+            saved_hl = malloc(row->rsize);
+            memcpy(saved_hl, row->hl, row->rsize);
+            //  memset() the matched substring to HL_MATCH for search result highlighting
+            memset(&row->hl[match - row->render], HL_MATCH, strlen(query)); // match - row->render is the index into render of the match, so we use that as our index into hl.
+            /**Notice that the malloc()’d memory is guaranteed to be free()’d, because when the user closes the search prompt by 
+             * pressing Enter or Escape, editorPrompt() calls our callback, giving a chance for hl to be restored before editorPrompt() 
+             * finally returns.*/
+            
             break;
         }
     }
