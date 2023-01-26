@@ -4,7 +4,6 @@
 #define _BSD_SOURCE
 #define _GNU_SOURCE
 
-
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -259,6 +258,12 @@ int getWindowSize(int *rows, int *cols) {
 
 /*** syntax highlighting ***/
 
+// returns true if char is considered a separator character
+int is_separator(int c) {
+    // strchr() from String.h looks for first occurence of char in str and returns a pointer to the mathcin character in the string else NULL.
+    return isspace(c) || c == '\0' || strchr(",.()+-/*=~%<>[];", c) != NULL;
+}
+
 // goes through chars of an erow highlighting them by setting each value in the hl array
 void editorUpdateSyntax(erow *row) {
     // allocate needed memory
@@ -266,11 +271,26 @@ void editorUpdateSyntax(erow *row) {
     //  set all characters to HL_NORMAL
     memset(row->hl, HL_NORMAL, row->rsize);
 
-    int i;
-    for (i = 0; i < row->rsize; i++) {
-        if (isdigit(row->render[i])) {
+    // Numbers should only be highlighted if they are preceded by a "seperator" char or 0 byte like end of a line
+    // keeps track if previous char is a separator
+    int prev_sep = 1; // initialize to one cause we consider the beginning of a line to be a seperator else number at the beginning of a line would not be highlighted
+
+    int i = 0;
+    while (i < row->rsize) {
+        char c = row->render[i];
+        // set to highlight type of previous char
+        unsigned char prev_hl = (i > 0) ? row->hl[i-1] : HL_NORMAL;
+
+        // require the previous character to either be a separator, or to also be highlighted with HL_NUMBER.
+        if (isdigit(c) && (prev_sep || prev_hl == HL_NUMBER) || (c == '.' && prev_hl == HL_NUMBER)) {
             row->hl[i] = HL_NUMBER;
+            i++;
+            prev_sep = 0;
+            continue;
         }
+
+        prev_sep = is_separator(c);
+        i++;
     }
 }
 
