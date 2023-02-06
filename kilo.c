@@ -222,6 +222,7 @@ int getCursorPosition(int *rows, int *cols) {
     }
     buf[i] = '\0'; // printf() expects strings to end with a 0 byte, so we make sure to assign '\0' to the final byte of buf.
 
+    
     // Let’s parse the two numbers out of there using sscanf()
     if (buf[0] != '\x1b' || buf[1] != '[') return -1;
     if (sscanf(&buf[2], "%d;%d", rows, cols) != 2) return -1;
@@ -244,7 +245,7 @@ int getWindowSize(int *rows, int *cols) {
         // we move the cursoer to the bottom-right by sending two escape sequences one after the other.
         // The C command (Cursor Forward) moves the cursor to the right, and the B command (Cursor Down) moves the cursor down.
         if (write(STDOUT_FILENO, "\x1b[999C\x1b[999B", 12) != 12) return -1; 
-            return getCursorPosition(rows, cols);
+        return getCursorPosition(rows, cols);
     } else {                // If it succeeded, we pass the values back by setting the int references 
                             // that were passed to the function. (This is a common approach to having 
                             // functions return multiple values in C. It also allows you to use the return value to 
@@ -282,7 +283,7 @@ void editorUpdateSyntax(erow *row) {
         unsigned char prev_hl = (i > 0) ? row->hl[i-1] : HL_NORMAL;
 
         // require the previous character to either be a separator, or to also be highlighted with HL_NUMBER.
-        if (isdigit(c) && (prev_sep || prev_hl == HL_NUMBER) || (c == '.' && prev_hl == HL_NUMBER)) {
+        if ((isdigit(c) && (prev_sep || prev_hl == HL_NUMBER)) || (c == '.' && prev_hl == HL_NUMBER)) {
             row->hl[i] = HL_NUMBER;
             i++;
             prev_sep = 0;
@@ -341,9 +342,9 @@ int editorRowRxToCx(erow *row, int rx) {
 void editorUpdateRow(erow *row) {
     int tabs = 0;
     int j;
-    for(j = 0; j < row->size; j++); // loop through the chars of the row and count the tabs, to know how much memory to allocate for render
+    for(j = 0; j < row->size; j++) { // loop through the chars of the row and count the tabs, to know how much memory to allocate for render
         if (row->chars[j] == '\t') tabs++; // check if char is a tab and if so increament tab
-    
+    }
     free(row->render);
     row->render = malloc(row->size + tabs*(KILO_TAB_STOP - 1) + 1); // calculate the maximum memory needed for the rendered row and allocate memory
 
@@ -828,7 +829,7 @@ void editorDrawRows(struct abuf *ab){
 }
 
 
-editorDrawStatusBar(struct abuf *ab) {
+void editorDrawStatusBar(struct abuf *ab) {
     abAppend(ab, "\x1b[7m", 4); // <esc>[7m switches to inverted colors
     char status[80], rstatus[80];
     // display (modified) after filename if the file has been modified after opening
@@ -848,7 +849,7 @@ editorDrawStatusBar(struct abuf *ab) {
         }
     }
     abAppend(ab, "\x1b[m", 3); //switch back to normal colors 
-      abAppend(ab, "\r\n", 2); // room for temp status msg
+    abAppend(ab, "\r\n", 2); // room for temp status msg
 }
 
 
