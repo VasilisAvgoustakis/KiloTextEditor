@@ -116,6 +116,7 @@ void disableRawMode() {
 
 // sets terminal attributes so that it runs in raw mode
 void enableRawMode() {
+    //retrieve original terminal attributes from terminal file descriptor and store them in orig_termios var
     if(tcgetattr(STDIN_FILENO, &E.orig_termios) == -1) die("tcgetattr");
     atexit(disableRawMode);
 
@@ -146,6 +147,7 @@ void enableRawMode() {
     raw.c_cc[VMIN] = 0; // sets min# of bytes of input needed before read can return.
     raw.c_cc[VTIME] = 1; // sets max wait time before read can return
 
+    // set the new terminal attributes in the file descriptor file of the terminal
     if(tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) die("tcsetattr");
 }
 
