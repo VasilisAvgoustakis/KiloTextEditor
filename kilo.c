@@ -4,6 +4,7 @@
 #define _BSD_SOURCE
 #define _GNU_SOURCE
 
+#include "main.h"
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -734,7 +735,6 @@ void abFree(struct abuf *ab){
 }
 
 /*** output ***/
-
 
 // checks if the cursor has moved outside of the visiblee window and if so adjusts E.rowoff so that the cursor is just inside the visible window.
 void editorScroll(){
