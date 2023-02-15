@@ -781,11 +781,11 @@ void editorDrawRows(struct abuf *ab){
                     abAppend(ab, "~", 1);
                     padding--;
                 }
-            /***
-             * That tells you how far from the left edge of the screen you should start printing the string. 
-             * So we fill that space with space characters, except for the first character, which should be a tilde.
-             * ***/
-            while (padding--) abAppend(ab, " ", 1);
+                /***
+                 * That tells you how far from the left edge of the screen you should start printing the string. 
+                 * So we fill that space with space characters, except for the first character, which should be a tilde.
+                 * ***/
+                while (padding--) abAppend(ab, " ", 1);
 
             abAppend(ab, welcome, welcomelen);
         }else{
