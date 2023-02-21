@@ -480,7 +480,7 @@ void editorInsertNewline() {
         erow *row = &E.row[E.cy];
         // insert a new row containing the chars of the splitted line that were right of the cursor
         editorInsertRow(E.cy + 1, &row->chars[E.cx], row->size - E.cx);
-        // reassign row pointer to because editorInsertRow() calls realloc(), which might move memory around on us and invalidate the pointer 
+        // reassign row pointer because editorInsertRow() calls realloc(), which might move memory around on us and invalidate the pointer 
         row = &E.row[E.cy];
         // turncate current row's contents setting its size to the position of the cursor
         row->size = E.cx;
@@ -727,7 +727,6 @@ void abAppend(struct abuf *ab, const char *s, int len){
     ab->b = new;
     ab->len += len;
 }
-
 
 //destructor that deallocates the dynamic memory used by an abuf.
 void abFree(struct abuf *ab){
