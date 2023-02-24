@@ -72,7 +72,7 @@ struct editorConfig {
     char *filename; // for filename string
     char statusmsg[80]; // status msg string
     time_t statusmsg_time; // timestamp for status msg
-    struct termios orig_termios; // termios struct holds terminal attributes, orig_termios holds the original state of our terminal
+    struct termios orig_termios; // termios struct holds  attributes, orig_termios holds the original state of our 
 };
 
 struct editorConfig E;
@@ -152,7 +152,6 @@ void enableRawMode() {
     if(tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) die("tcsetattr");
 }
 
-
 // wait for one keypress, and return it
 int editorReadKey() {
     int nread;
@@ -211,7 +210,6 @@ int editorReadKey() {
     return c;
 }
 
-
 int getCursorPosition(int *rows, int *cols) {
     char buf[32]; // buffer to read in the response until we get to char 'R'
     int i = 0;
@@ -233,7 +231,6 @@ int getCursorPosition(int *rows, int *cols) {
 
     return -1;
 }
-
 
 // the easy way to get window size
 int getWindowSize(int *rows, int *cols) {
@@ -866,7 +863,7 @@ void editorRefreshScreen() {
     editorScroll();
     
     struct abuf ab = ABUF_INIT;
-    // The h and l commands (Set Mode, Reset Mode) are used to turn on and turn off various terminal features or “modes”.
+    // The h and l commands (Set Mode, Reset Mode) are used to turn on and turn off various  features or “modes”.
     abAppend(&ab, "\x1b[?25l", 6); // hides the cursor before refreshing screen to avoid flicker effect
 
     // H command (Cursor Position) to position the cursor.
@@ -881,10 +878,10 @@ void editorRefreshScreen() {
 
     // After we’re done drawing, we do another <esc>[H escape sequence to reposition the cursor back up at the top-left corner.
     char buf[32];
-    snprintf(buf, sizeof(buf), "\x1b[%d;%dH", (E.cy - E.rowoff) + 1, (E.rx - E.coloff) + 1); // We add 1 to E.cy and E.cx to convert from 0-indexed values to the 1-indexed values that the terminal uses.
+    snprintf(buf, sizeof(buf), "\x1b[%d;%dH", (E.cy - E.rowoff) + 1, (E.rx - E.coloff) + 1); // We add 1 to E.cy and E.cx to convert from 0-indexed values to the 1-indexed values that the  uses.
     abAppend(&ab, buf, strlen(buf));
 
-    // The h and l commands (Set Mode, Reset Mode) are used to turn on and turn off various terminal features or “modes”.
+    // The h and l commands (Set Mode, Reset Mode) are used to turn on and turn off various  features or “modes”.
     abAppend(&ab, "\x1b[?25h", 6);
 
     // finally we use just one write() to format our screen as wished
