@@ -1,2 +1,3 @@
-# A lightweight CLI text editor based on the following manual
+# KILO Text Editor
+A lightweight CLI text editor based on the following manual:
 https://viewsourcecode.org/snaptoken/kilo/index.html
